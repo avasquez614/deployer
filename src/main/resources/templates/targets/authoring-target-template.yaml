@@ -1,0 +1,15 @@
+target:
+  env: {{env}}
+  siteName: {{site_name}}
+  localRepoPath: {{repo_url}}
+  search:
+    indexIdFormat: '%s-authoring'
+  deployment:
+    scheduling:
+       enabled: false
+    pipeline:
+      - processorName: gitDiffProcessor
+        includeGitLog: true
+      - processorName: authoringElasticsearchIndexingProcessor
+        reindexItemsOnComponentUpdates: false
+      - processorName: fileOutputProcessor

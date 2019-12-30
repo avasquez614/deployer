@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2017 Crafter Software Corporation.
+ * Copyright (C) 2007-2019 Crafter Software Corporation. All Rights Reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,15 +17,15 @@
 package org.craftercms.deployer.impl;
 
 import org.apache.commons.configuration2.HierarchicalConfiguration;
+import org.apache.commons.configuration2.tree.ImmutableNode;
+import org.craftercms.commons.config.ConfigurationException;
 import org.craftercms.deployer.api.DeploymentPipeline;
-import org.craftercms.deployer.api.exceptions.DeployerConfigurationException;
 import org.craftercms.deployer.api.exceptions.DeployerException;
 import org.springframework.context.ApplicationContext;
-import org.springframework.context.ConfigurableApplicationContext;
 
 /**
- * Factory that uses target-specific YAML configuration and Spring configuration to a create the {@link DeploymentPipeline} for a
- * target.
+ * Factory that uses target-specific YAML configuration and Spring configuration to create the
+ * {@link DeploymentPipeline} for a target.
  *
  * @author avasquez
  */
@@ -40,9 +40,11 @@ public interface DeploymentPipelineFactory {
      *
      * @return the deployment pipeline
      *
-     * @throws DeployerException if an error occurs
+     * @throws ConfigurationException if a configuration related exception occurs
+     * @throws DeployerException if a general error occurs
      */
-    DeploymentPipeline getPipeline(HierarchicalConfiguration configuration, ApplicationContext applicationContext,
-                                   String pipelinePropertyName) throws DeployerException;
+    DeploymentPipeline getPipeline(HierarchicalConfiguration<ImmutableNode> configuration,
+                                   ApplicationContext applicationContext, String pipelinePropertyName)
+            throws ConfigurationException, DeployerException;
 
 }

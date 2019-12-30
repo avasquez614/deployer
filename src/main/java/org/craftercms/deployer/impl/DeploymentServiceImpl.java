@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2017 Crafter Software Corporation.
+ * Copyright (C) 2007-2019 Crafter Software Corporation. All Rights Reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +27,10 @@ import org.craftercms.deployer.api.Target;
 import org.craftercms.deployer.api.TargetService;
 import org.craftercms.deployer.api.exceptions.DeploymentServiceException;
 import org.craftercms.deployer.api.exceptions.TargetNotFoundException;
+import org.craftercms.deployer.api.exceptions.TargetNotReadyException;
 import org.craftercms.deployer.api.exceptions.TargetServiceException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -39,6 +42,8 @@ import org.springframework.stereotype.Component;
 @Component("deploymentService")
 public class DeploymentServiceImpl implements DeploymentService {
 
+    private static final Logger logger = LoggerFactory.getLogger(DeploymentServiceImpl.class);
+
     protected final TargetService targetService;
 
     @Autowired
@@ -47,7 +52,8 @@ public class DeploymentServiceImpl implements DeploymentService {
     }
 
     @Override
-    public List<Deployment> deployAllTargets(boolean waitTillDone, Map<String, Object> params) throws DeploymentServiceException {
+    public List<Deployment> deployAllTargets(boolean waitTillDone,
+                                             Map<String, Object> params) throws DeploymentServiceException {
         List<Target> targets;
         try {
             targets = targetService.getAllTargets();
@@ -59,8 +65,13 @@ public class DeploymentServiceImpl implements DeploymentService {
 
         if (CollectionUtils.isNotEmpty(targets)) {
             for (Target target : targets) {
-                Deployment deployment = target.deploy(waitTillDone, params);
-                deployments.add(deployment);
+                Deployment deployment;
+                try {
+                    deployment = target.deploy(waitTillDone, params);
+                    deployments.add(deployment);
+                } catch (TargetNotReadyException e) {
+                    logger.error(e.getMessage());
+                }
             }
         }
 
@@ -69,11 +80,13 @@ public class DeploymentServiceImpl implements DeploymentService {
 
     @Override
     public Deployment deployTarget(String env, String siteName, boolean waitTillDone,
-                                   Map<String, Object> params) throws TargetNotFoundException, DeploymentServiceException {
+                                   Map<String, Object> params) throws TargetNotFoundException,
+                                                                      DeploymentServiceException {
         try {
             return targetService.getTarget(env, siteName).deploy(waitTillDone, params);
-        } catch (TargetServiceException e) {
-            throw new DeploymentServiceException("Error while deploying target for env = " + env + ", site = " + siteName, e);
+        } catch (TargetServiceException | TargetNotReadyException e) {
+            throw new DeploymentServiceException("Error while deploying target '" + TargetImpl.getId(env, siteName) +
+                                                 "'", e);
         }
     }
 

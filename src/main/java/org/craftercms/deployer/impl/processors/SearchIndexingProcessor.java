@@ -1,81 +1,58 @@
+/*
+ * Copyright (C) 2007-2019 Crafter Software Corporation. All Rights Reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 package org.craftercms.deployer.impl.processors;
 
-import java.util.Collections;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.commons.collections.CollectionUtils;
-import org.apache.commons.collections4.ListUtils;
-import org.apache.commons.configuration2.Configuration;
-import org.apache.commons.lang3.StringUtils;
-import org.craftercms.core.service.ContentStoreService;
-import org.craftercms.core.service.Context;
-import org.craftercms.core.store.impl.filesystem.FileSystemContentStoreAdapter;
-import org.craftercms.deployer.api.ChangeSet;
-import org.craftercms.deployer.api.Deployment;
-import org.craftercms.deployer.api.ProcessorExecution;
-import org.craftercms.deployer.api.exceptions.DeployerException;
-import org.craftercms.deployer.utils.ConfigUtils;
 import org.craftercms.search.batch.BatchIndexer;
-import org.craftercms.search.batch.UpdateSet;
-import org.craftercms.search.batch.UpdateStatus;
+import org.craftercms.search.service.Query;
 import org.craftercms.search.service.SearchService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.craftercms.search.service.impl.SolrQuery;
 import org.springframework.beans.factory.annotation.Required;
 
 /**
- * Processor that indexes the files on the change set, using one or several {@link BatchIndexer}. After the files have been indexed it
- * submits a commit. A processor instance can be configured with the following YAML properties:
- *
- * <ul>
- *     <li><strong>ignoreIndexId:</strong> If the index ID should be ignored, in other words, if the index ID should always be null
- *     on update calls.</li>
- *     <li><strong>indexId:</strong> The specific index ID to use</li>
- *     <li><strong>indexIdFormat:</strong> The String.format, based onf the site name, that should be used to generate the index ID.
- *     E.g. a <emp>%s-default'</emp> format with a <em>mysite</em> site name will generate a <em>mysite-default</em> index ID.</li>
- *     <
- * </ul>
- *
- * @author avasquez
+ * @author joseross
  */
-public class SearchIndexingProcessor extends AbstractMainDeploymentProcessor {
+public class SearchIndexingProcessor extends AbstractSearchIndexingProcessor {
 
-    private static final Logger logger = LoggerFactory.getLogger(SearchIndexingProcessor.class);
+    protected static final String LOCAL_ID_FIELD = "localId";
+    protected static final String SEARCH_RESULTS_RESPONSE_PROPERTY = "response";
+    protected static final String SEARCH_RESULTS_NUM_FOUND_PROPERTY = "numFound";
+    protected static final String SEARCH_RESULTS_DOCUMENTS_PROPERTY = "documents";
 
-    public static final String DEFAULT_INDEX_ID_FORMAT = "%s";
+    protected static final String DEFAULT_ITEMS_THAT_INHERIT_FROM_DESCRIPTOR_QUERY_FORMAT = "inheritsFrom_smv:\"%s\"";
+    protected static final String DEFAULT_ITEMS_THAT_INCLUDE_COMPONENT_QUERY_FORMAT = "includedDescriptors:\"%s\"";
 
-    public static final String INDEX_ID_CONFIG_KEY = "indexId";
-    public static final String INDEX_ID_FORMAT_CONFIG_KEY = "indexIdFormat";
-    public static final String IGNORE_INDEX_ID_CONFIG_KEY = "ignoreIndexId";
+    protected String itemsThatInheritFromDescriptorQueryFormat;
+    protected String itemsThatIncludeComponentQueryFormat;
 
-    protected String localRepoUrl;
-    protected ContentStoreService contentStoreService;
     protected SearchService searchService;
-    protected List<BatchIndexer> batchIndexers;
-    protected boolean xmlMergingEnabled;
-    protected String indexId;
-    protected Context context;
 
-    /**
-     * Sets the URL of the local repository that will be passed to the {@link ContentStoreService} to retrieve the files to
-     * index.
-     */
-    @Required
-    public void setLocalRepoUrl(String localRepoUrl) {
-        this.localRepoUrl = localRepoUrl;
+    public SearchIndexingProcessor() {
+        this.itemsThatInheritFromDescriptorQueryFormat = DEFAULT_ITEMS_THAT_INHERIT_FROM_DESCRIPTOR_QUERY_FORMAT;
+        this.itemsThatIncludeComponentQueryFormat = DEFAULT_ITEMS_THAT_INCLUDE_COMPONENT_QUERY_FORMAT;
     }
 
     /**
-     * Sets the content store used to retrieve the files to index.
-     */
-    @Required
-    public void setContentStoreService(ContentStoreService contentStoreService) {
-        this.contentStoreService = contentStoreService;
-    }
-
-    /**
-     * Sets the search service. Since all indexing is done through the {@link BatchIndexer}s the search service is only used
+     * Sets the search service. Since all indexing is done through the {@link BatchIndexer}s the search service is
+     * only used
      * to commit.
      */
     @Required
@@ -84,119 +61,74 @@ public class SearchIndexingProcessor extends AbstractMainDeploymentProcessor {
     }
 
     /**
-     * Sets the single batch indexer used for indexing.
+     * Sets the format of the search query used to find items that include components (used when
+     * {@code reindexItemsOnComponentUpdates} is enabled).
      */
-    public void setBatchIndexer(BatchIndexer batchIndexer) {
-        this.batchIndexers = Collections.singletonList(batchIndexer);
-    }
-
-    /**
-     * Sets the list of batch indexers used for indexing.
-     */
-    public void setBatchIndexers(List<BatchIndexer> batchIndexers) {
-        this.batchIndexers = batchIndexers;
-    }
-
-    /**
-     * Sets whether XML merging (aka inheritance) should be enabled when retrieving XML from the {@link ContentStoreService}.
-     */
-    public void setXmlMergingEnabled(boolean xmlMergingEnabled) {
-        this.xmlMergingEnabled = xmlMergingEnabled;
+    public void setItemsThatIncludeComponentQueryFormat(String itemsThatIncludeComponentQueryFormat) {
+        this.itemsThatIncludeComponentQueryFormat = itemsThatIncludeComponentQueryFormat;
     }
 
     @Override
-    protected void doInit(Configuration config) throws DeployerException {
-        boolean ignoreIndexId = ConfigUtils.getBooleanProperty(config, IGNORE_INDEX_ID_CONFIG_KEY, false);
-        if (ignoreIndexId) {
-            indexId = null;
-        } else {
-            indexId = ConfigUtils.getStringProperty(config, INDEX_ID_CONFIG_KEY);
-            if (StringUtils.isEmpty(indexId)) {
-                String indexIdFormat = ConfigUtils.getStringProperty(config, INDEX_ID_FORMAT_CONFIG_KEY, DEFAULT_INDEX_ID_FORMAT);
-
-                indexId = String.format(indexIdFormat, siteName);
-            }
-        }
-
-        if (CollectionUtils.isEmpty(batchIndexers)) {
-            throw new IllegalStateException("At least one batch indexer should be provided");
-        }
+    protected void doCommit(final String indexId) {
+        searchService.commit(indexId);
     }
 
     @Override
-    public void destroy() {
+    protected List<String> getItemsThatInheritDescriptor(final String indexId, final String descriptorPath) {
+        return searchField(indexId, descriptorPath, createItemsThatInheritFromDescriptorQuery(descriptorPath));
     }
 
-    @Override
-    protected ChangeSet doExecute(Deployment deployment, ProcessorExecution execution,
-                                  ChangeSet filteredChangeSet) throws DeployerException {
-        logger.info("Performing search indexing...");
+    protected Query createItemsThatInheritFromDescriptorQuery(String descriptorPath) {
+        String queryStatement = String.format(itemsThatInheritFromDescriptorQueryFormat, descriptorPath);
+        SolrQuery query = new SolrQuery();
 
-        ChangeSet changeSet = deployment.getChangeSet();
-        List<String> createdFiles = changeSet.getCreatedFiles();
-        List<String> updatedFiles = changeSet.getUpdatedFiles();
-        List<String> deletedFiles = changeSet.getDeletedFiles();
-        UpdateSet updateSet = new UpdateSet(ListUtils.union(createdFiles, updatedFiles), deletedFiles);
-        UpdateStatus updateStatus = new UpdateStatus();
+        query.setQuery(queryStatement);
+        query.setFieldsToReturn(LOCAL_ID_FIELD);
 
-        execution.setStatusDetails(updateStatus);
-
-        context = createContentStoreContext();
-        try {
-            if (CollectionUtils.isNotEmpty(createdFiles)) {
-                for (BatchIndexer indexer : batchIndexers) {
-                    indexer.updateIndex(searchService, indexId, siteName, contentStoreService, context, updateSet, updateStatus);
-                }
-            }
-            if (CollectionUtils.isNotEmpty(updatedFiles)) {
-                for (BatchIndexer indexer : batchIndexers) {
-                    indexer.updateIndex(searchService, indexId, siteName, contentStoreService, context, updateSet, updateStatus);
-                }
-            }
-            if (CollectionUtils.isNotEmpty(deletedFiles)) {
-                for (BatchIndexer indexer : batchIndexers) {
-                    indexer.updateIndex(searchService, indexId, siteName, contentStoreService, context, updateSet, updateStatus);
-                }
-            }
-
-            if (updateStatus.getAttemptedUpdatesAndDeletes() > 0) {
-                searchService.commit(indexId);
-            }
-        } catch (Exception e) {
-            throw new DeployerException("Error while performing search indexing", e);
-        } finally {
-            destroyContentStoreContext(context);
-        }
-
-        return null;
+        return query;
     }
 
-    @Override
-    protected boolean failDeploymentOnProcessorFailure() {
-        return false;
+    protected Query createItemsThatIncludeComponentQuery(String componentId) {
+        String queryStatement = String.format(itemsThatIncludeComponentQueryFormat, componentId);
+        SolrQuery query = new SolrQuery();
+
+        query.setQuery(queryStatement);
+        query.setFieldsToReturn(LOCAL_ID_FIELD);
+
+        return query;
     }
 
-    protected Context createContentStoreContext() throws DeployerException {
-        try {
-            Context context = contentStoreService.createContext(FileSystemContentStoreAdapter.STORE_TYPE, null, null, null, localRepoUrl,
-                                                                xmlMergingEnabled, false, 0, Context.DEFAULT_IGNORE_HIDDEN_FILES);
-
-            logger.debug("Content store context created: {}", context);
-
-            return context;
-        } catch (Exception e) {
-            throw new DeployerException("Unable to create context for content store @ " + localRepoUrl, e);
-        }
+    protected List<String> getItemsThatIncludeComponent(String indexId, String componentPath) {
+        return searchField(indexId, componentPath, createItemsThatIncludeComponentQuery(componentPath));
     }
 
-    protected void destroyContentStoreContext(Context context) {
-        try {
-            contentStoreService.destroyContext(context);
+    @SuppressWarnings("unchecked")
+    protected List<String> searchField(String indexId, String componentPath, Query query) {
+        List<String> items = new ArrayList<>();
+        int start = 0;
+        int rows = itemsThatIncludeComponentQueryRows;
+        int count;
+        Map<String, Object> result;
+        Map<String, Object> response;
+        List<Map<String, Object>> documents;
 
-            logger.debug("Content store context destroyed: {}", context);
-        } catch (Exception e) {
-            logger.warn("Unable to destroy context " + context, e);
-        }
+        do {
+            query.setOffset(start);
+            query.setNumResults(rows);
+
+            result = searchService.search(indexId, query);
+            response = (Map<String, Object>)result.get(SEARCH_RESULTS_RESPONSE_PROPERTY);
+            count = (int)response.get(SEARCH_RESULTS_NUM_FOUND_PROPERTY);
+            documents = (List<Map<String, Object>>)response.get(SEARCH_RESULTS_DOCUMENTS_PROPERTY);
+
+            for (Map<String, Object> document : documents) {
+                items.add((String)document.get(LOCAL_ID_FIELD));
+            }
+
+            start += rows;
+        } while (start <= count);
+
+        return items;
     }
 
 }

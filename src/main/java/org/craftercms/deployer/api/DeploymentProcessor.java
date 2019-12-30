@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2017 Crafter Software Corporation.
+ * Copyright (C) 2007-2019 Crafter Software Corporation. All Rights Reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,26 +16,20 @@
  */
 package org.craftercms.deployer.api;
 
-import java.util.Map;
-
-import org.apache.commons.configuration2.Configuration;
 import org.craftercms.deployer.api.exceptions.DeployerException;
+import org.craftercms.deployer.utils.beans.InitializableByConfigBean;
 
 /**
  * Represents a single deployment processor.
  *
  * @author avasquez
  */
-public interface DeploymentProcessor {
+public interface DeploymentProcessor extends InitializableByConfigBean {
 
     /**
-     * Initializes the processor, configuring it by using the specified configuration.
-     *
-     * @param config    the processor configuration
-     *
-     * @throws DeployerException if a configuration property is missing or if any other error occurred
+     * Returns true if this processor runs after the deployment has finalized.
      */
-    void init(Configuration config) throws DeployerException;
+    boolean isPostDeployment();
 
     /**
      * Destroys the processor, closing and releasing any used resources.

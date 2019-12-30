@@ -13,12 +13,12 @@ server:
 ##                Spring Properties               ##
 ####################################################
 spring:
+  main:
+    # Bean overriding became `false` by default in Spring Boot 2.1.0+
+    allow-bean-definition-overriding: true
   freemarker:
     # If Spring should check it's default template location (always false since we handle our own Freemarker templates)
     checkTemplateLocation: false
-logging:
-  # Logging path for Spring, which should be the same as the Deployer logging path
-  path: ${deployer.main.logging.folderPath}
 
 ####################################################
 ##               Deployer Properties              ##
@@ -33,7 +33,7 @@ deployer:
     targets:
       config:
         # The folder path for target configuration files
-        folderPath: ${deployer.main.config.folderPath}/targets
+        folderPath: ${targets.dir}
         baseYaml:
           # The location (Spring URL) of the base YAML configuration for targets
           location: classpath:base-target.yaml
@@ -45,34 +45,53 @@ deployer:
           # The override location (Spring URL) of the base Spring context file for targets
           overrideLocation: file:${deployer.main.config.folderPath}/base-target-context.xml
         templates:
-          # The location (Spring URL) where target YAML templates can be found. Target templates are used to create new targets.
-          location: classpath:templates/targets
-          # The override location (Spring URL) where target YAML templates can be found. Target templates are used to create new targets.
-          overrideLocation: file:${deployer.main.config.folderPath}/templates/targets
+          # The location (Spring URL) of the base folder where target YAML templates can be found. Target templates are used to create new targets.
+          location: classpath:templates/targets/
+          # The override location (Spring URL) of the base folder where target YAML templates can be found. Target templates are used to create new targets.
+          overrideLocation: file:${deployer.main.config.folderPath}/templates/targets/
           # The encoding used to read the templates
           encoding: UTF-8
           # The name of the default template
           default: default
           # The suffix used to resolve the final name of a target template
           suffix: -target-template.yaml
+        aws:
+          cloudformation:
+            # The location (Spring URL) of the base folder where AWS CloudFormation template files can be found (should end in /)
+            location: classpath:aws/cloudformation/
+            # The override location of the base folder where AWS CloudFormation template files can be found (should end in /)
+            overrideLocation: file:${deployer.main.config.folderPath}/aws/cloudformation/
       scan:
         scheduling:
           # If scheduled scanning of new/updated targets should be enabled
           enabled: true
           # The cron expression used on scheduled scanning of new/updated targets.
           cron: '0 * * * * *'
+      cleanup:
+        # If scheduled cleanup of targets should be enabled
+        enabled: true
+        # The cron expression used on scheduled cleanup of targets
+        cron: '0 0 3 ? * SUN'
     deployments:
       # The folder path where site deployments are placed
-      folderPath: ${deployer.main.homePath}/deployments
+      folderPath: ${deployments.dir}
       output:
         # The folder path where deployment output files are written to
-        folderPath: ${deployer.main.homePath}/logs
+        folderPath: ${logs.dir}
       processedCommits:
         # The folder path where processed commit files are stored
-        folderPath: ${deployer.main.homePath}/processed-commits
-    logging:
-      # The folder path where log files are written to
-      folderPath: ${deployer.main.homePath}/logs
+        folderPath: ${processedCommits.dir}
+      pool:
+        # Thread pool core size
+        size: 10
+        # Thread pool max size
+        max: 20
+        # Thread pool queue size
+        queue: 10
+        # Thread pool group name
+        name: deployments
+        # Thread pool worker prefix
+        prefix: deployment-
     taskScheduler:
       # Thread pool size of the task scheduler
       poolSize: 10

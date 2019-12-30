@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2017 Crafter Software Corporation.
+ * Copyright (C) 2007-2019 Crafter Software Corporation. All Rights Reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -61,7 +61,7 @@ public class ExceptionHandlers extends ValidationAwareRestExceptionHandlers {
     public ResponseEntity<Object> handleTargetAlreadyExistsException(TargetAlreadyExistsException ex, WebRequest request) {
         HttpHeaders headers = RestServiceUtils.setLocationHeader(new HttpHeaders(),
                                                                  TargetController.BASE_URL + TargetController.GET_TARGET_URL,
-                                                                 ex.getId());
+                                                                 ex.getEnv(), ex.getSiteName());
 
         return handleExceptionInternal(ex, "Target already exists", headers, HttpStatus.CONFLICT, request);
     }

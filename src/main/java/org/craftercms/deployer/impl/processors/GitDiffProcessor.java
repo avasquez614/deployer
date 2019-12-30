@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2017 Crafter Software Corporation.
+ * Copyright (C) 2007-2019 Crafter Software Corporation. All Rights Reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,22 +18,27 @@ package org.craftercms.deployer.impl.processors;
 
 import java.io.File;
 import java.io.IOException;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-import org.apache.commons.collections.MapUtils;
 import org.apache.commons.configuration2.Configuration;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.BooleanUtils;
+import org.craftercms.commons.config.ConfigurationException;
+import org.craftercms.search.batch.UpdateDetail;
 import org.craftercms.deployer.api.ChangeSet;
 import org.craftercms.deployer.api.Deployment;
 import org.craftercms.deployer.api.ProcessorExecution;
 import org.craftercms.deployer.api.exceptions.DeployerException;
 import org.craftercms.deployer.impl.ProcessedCommitsStore;
+import org.craftercms.deployer.utils.ConfigUtils;
 import org.craftercms.deployer.utils.GitUtils;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.LogCommand;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.lib.Constants;
@@ -64,8 +69,14 @@ public class GitDiffProcessor extends AbstractMainDeploymentProcessor {
 
     private static final Logger logger = LoggerFactory.getLogger(GitDiffProcessor.class);
 
+    protected static final String INCLUDE_GIT_LOG_CONFIG_KEY = "includeGitLog";
+
     protected File localRepoFolder;
     protected ProcessedCommitsStore processedCommitsStore;
+
+    // Config properties (populated on init)
+
+    protected boolean includeGitLog;
 
     /**
      * Sets the local filesystem folder the contains the deployed repository.
@@ -84,11 +95,13 @@ public class GitDiffProcessor extends AbstractMainDeploymentProcessor {
     }
 
     @Override
-    protected void doInit(Configuration config) throws DeployerException {
+    protected void doInit(Configuration config) throws ConfigurationException {
+        this.includeGitLog = ConfigUtils.getBooleanProperty(config, INCLUDE_GIT_LOG_CONFIG_KEY, false);
     }
 
     @Override
-    public void destroy() throws DeployerException {
+    protected void doDestroy() throws DeployerException {
+        // Do nothing
     }
 
     @Override
@@ -98,8 +111,8 @@ public class GitDiffProcessor extends AbstractMainDeploymentProcessor {
     }
 
     @Override
-    protected ChangeSet doExecute(Deployment deployment, ProcessorExecution execution,
-                                  ChangeSet filteredChangeSet) throws DeployerException {
+    protected ChangeSet doMainProcess(Deployment deployment, ProcessorExecution execution,
+                                      ChangeSet filteredChangeSet, ChangeSet originalChangeSet) throws DeployerException {
         boolean reprocessAllFiles = getReprocessAllFilesParam(deployment);
         if (reprocessAllFiles) {
             processedCommitsStore.delete(targetId);
@@ -110,9 +123,13 @@ public class GitDiffProcessor extends AbstractMainDeploymentProcessor {
         try (Git git = openLocalRepository()) {
             ObjectId previousCommitId = processedCommitsStore.load(targetId);
             ObjectId latestCommitId = getLatestCommitId(git);
+
             ChangeSet changeSet = resolveChangeSetFromCommits(git, previousCommitId, latestCommitId);
 
             if (changeSet != null) {
+                if (includeGitLog) {
+                    updateChangeDetails(changeSet, git, previousCommitId, latestCommitId);
+                }
                 execution.setStatusDetails("Changes detected and resolved successfully");
             } else {
                 execution.setStatusDetails("No changes detected");
@@ -121,6 +138,44 @@ public class GitDiffProcessor extends AbstractMainDeploymentProcessor {
             processedCommitsStore.store(targetId, latestCommitId);
 
             return changeSet;
+        }
+    }
+
+    protected void updateChangeDetails(ChangeSet changeSet, Git git, ObjectId previousCommitId,
+                                       ObjectId latestCommitId) {
+        Map<String, UpdateDetail> changeDetails = new HashMap<>();
+        Map<String, String> changeLog = new HashMap<>();
+
+        try {
+            LogCommand logCmd = git.log();
+            if (previousCommitId != null && latestCommitId != null) {
+                logCmd.addRange(git.getRepository().parseCommit(previousCommitId),
+                    git.getRepository().parseCommit(latestCommitId));
+            }
+
+            Iterable<RevCommit> log = logCmd.call();
+            for (RevCommit commit : log) {
+                UpdateDetail detail = new UpdateDetail();
+                detail.setAuthor(commit.getAuthorIdent().getName());
+                detail.setDate(Instant.ofEpochSecond(commit.getCommitTime()));
+                changeDetails.put(commit.getName(), detail);
+
+                try (ObjectReader reader = git.getRepository().newObjectReader()) {
+                    RevCommit parent = commit.getParentCount() > 0? commit.getParent(0) : null;
+                    List<DiffEntry> diff = doDiff(git, reader, parent, commit);
+
+                    diff.forEach(entry -> {
+                        if(entry.getChangeType() != DiffEntry.ChangeType.DELETE) {
+                            changeLog.putIfAbsent(entry.getNewPath(), commit.getName());
+                        }
+                    });
+                }
+            }
+
+            changeSet.setUpdateDetails(changeDetails);
+            changeSet.setUpdateLog(changeLog);
+        } catch (Exception e) {
+            logger.error("Error getting git log for commits {} {}", previousCommitId, latestCommitId, e);
         }
     }
 
@@ -147,7 +202,8 @@ public class GitDiffProcessor extends AbstractMainDeploymentProcessor {
         }
     }
 
-    protected ChangeSet resolveChangeSetFromCommits(Git git, ObjectId fromCommitId, ObjectId toCommitId) throws DeployerException {
+    protected ChangeSet resolveChangeSetFromCommits(Git git, ObjectId fromCommitId,
+                                                    ObjectId toCommitId) throws DeployerException {
         String fromCommitIdStr = fromCommitId != null? fromCommitId.name(): "{empty}";
         String toCommitIdStr = toCommitId != null? toCommitId.name(): "{empty}";
 
@@ -155,14 +211,10 @@ public class GitDiffProcessor extends AbstractMainDeploymentProcessor {
             logger.info("Calculating change set from commits: {} -> {}", fromCommitIdStr, toCommitIdStr);
 
             try (ObjectReader reader = git.getRepository().newObjectReader()) {
-                AbstractTreeIterator fromTreeIter = getTreeIteratorForCommit(git, reader, fromCommitId);
-                AbstractTreeIterator toTreeIter = getTreeIteratorForCommit(git, reader, toCommitId);
-
-                List<DiffEntry> diffEntries = git.diff().setOldTree(fromTreeIter).setNewTree(toTreeIter).call();
-
-                return processDiffEntries(diffEntries);
+                return processDiffEntries(doDiff(git, reader, fromCommitId, toCommitId));
             } catch (IOException | GitAPIException e) {
-                throw new DeployerException("Failed to calculate change set from commits: " + fromCommitIdStr + " -> " + toCommitIdStr, e);
+                throw new DeployerException("Failed to calculate change set from commits: " + fromCommitIdStr +
+                                            " -> " + toCommitIdStr, e);
             }
         } else {
             logger.info("Commits are the same. No change set will be calculated", fromCommitIdStr, toCommitIdStr);
@@ -171,7 +223,16 @@ public class GitDiffProcessor extends AbstractMainDeploymentProcessor {
         }
     }
 
-    protected AbstractTreeIterator getTreeIteratorForCommit(Git git, ObjectReader reader, ObjectId commitId) throws IOException {
+    protected List<DiffEntry> doDiff(Git git, ObjectReader reader, ObjectId fromCommitId,
+                                     ObjectId toCommitId) throws IOException, GitAPIException {
+        AbstractTreeIterator fromTreeIter = getTreeIteratorForCommit(git, reader, fromCommitId);
+        AbstractTreeIterator toTreeIter = getTreeIteratorForCommit(git, reader, toCommitId);
+
+        return git.diff().setOldTree(fromTreeIter).setNewTree(toTreeIter).call();
+    }
+
+    protected AbstractTreeIterator getTreeIteratorForCommit(Git git, ObjectReader reader,
+                                                            ObjectId commitId) throws IOException {
         if (commitId != null) {
             RevTree tree = getTreeForCommit(git.getRepository(), commitId);
             CanonicalTreeParser treeParser = new CanonicalTreeParser();

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2017 Crafter Software Corporation.
+ * Copyright (C) 2007-2019 Crafter Software Corporation. All Rights Reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,21 +16,21 @@
  */
 package org.craftercms.deployer.impl.processors;
 
-import com.fasterxml.jackson.dataformat.csv.CsvMapper;
-import com.fasterxml.jackson.dataformat.csv.CsvSchema;
-
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.nio.file.Files;
-
+import org.apache.commons.collections4.ListUtils;
 import org.apache.commons.configuration2.Configuration;
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVPrinter;
 import org.apache.commons.io.FileUtils;
+import org.craftercms.deployer.api.ChangeSet;
 import org.craftercms.deployer.api.Deployment;
 import org.craftercms.deployer.api.exceptions.DeployerException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Required;
+
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
 
 /**
  * Post processor that writes the deployment result to an output file for later access, whenever a deployment fails or files where
@@ -42,10 +42,12 @@ public class FileOutputProcessor extends AbstractPostDeploymentProcessor {
 
     private static final Logger logger = LoggerFactory.getLogger(FileOutputProcessor.class);
 
-    public static final String OUTPUT_FILE_PARAM_NAME = "outputFile";
+    protected static final String OUTPUT_FILE_PARAM_NAME = "outputFile";
+    protected static final String[] HEADERS = {
+            "status", "duration", "start", "end", "created_files", "deleted_files", "updated_files"
+    };
 
     protected File outputFolder;
-    protected CsvMapper objectMapper;
 
     /**
      * Sets the output folder where the deployments results will be written to.
@@ -55,16 +57,8 @@ public class FileOutputProcessor extends AbstractPostDeploymentProcessor {
         this.outputFolder = outputFolder;
     }
 
-    /**
-     * Sets the CSV serializer to use to generate the output.
-     */
-    @Required
-    public void setObjectMapper(CsvMapper objectMapper) {
-        this.objectMapper = objectMapper;
-    }
-
     @Override
-    public void init(Configuration config) throws DeployerException {
+    public void doInit(Configuration config) throws DeployerException {
         if (!outputFolder.exists()) {
             try {
                 FileUtils.forceMkdir(outputFolder);
@@ -75,19 +69,33 @@ public class FileOutputProcessor extends AbstractPostDeploymentProcessor {
     }
 
     @Override
-    public void destroy() throws DeployerException {
+    protected void doDestroy() throws DeployerException {
+        // Do nothing
     }
 
     @Override
-    protected void doExecute(Deployment deployment) throws DeployerException {
+    protected ChangeSet doPostProcess(Deployment deployment, ChangeSet filteredChangeSet,
+                                      ChangeSet originalChangeSet) throws DeployerException {
         File outputFile = getOutputFile(deployment);
-        CsvSchema formatSchema = objectMapper.schemaFor(Deployment.class);
-        boolean useHeaders = !Files.exists(outputFile.toPath());
         try (FileWriter fileWriter = new FileWriter(outputFile, true)) {
-            if(useHeaders) {
-                formatSchema = formatSchema.withHeader();
+            CSVPrinter printer;
+            if(outputFile.exists() && outputFile.length() > 0) {
+                printer = new CSVPrinter(fileWriter, CSVFormat.DEFAULT);
+            } else {
+                printer = new CSVPrinter(fileWriter, CSVFormat.DEFAULT.withHeader(HEADERS));
             }
-            objectMapper.writer(formatSchema).writeValue(fileWriter, deployment);
+
+            ChangeSet changeSet = deployment.getChangeSet();
+
+            printer.printRecord(
+                    deployment.getStatus(),
+                    deployment.getDuration(),
+                    deployment.getStart().toInstant(),
+                    deployment.getEnd().toInstant(),
+                    ListUtils.emptyIfNull(changeSet.getCreatedFiles()),
+                    ListUtils.emptyIfNull(changeSet.getUpdatedFiles()),
+                    ListUtils.emptyIfNull(changeSet.getDeletedFiles())
+            );
         } catch (IOException e) {
             throw new DeployerException("Error while writing deployment output file " + outputFile, e);
         }
@@ -95,14 +103,15 @@ public class FileOutputProcessor extends AbstractPostDeploymentProcessor {
         deployment.addParam(OUTPUT_FILE_PARAM_NAME, outputFile);
 
         logger.info("Successfully wrote deployment output to {}", outputFile);
+
+        return null;
     }
 
     protected File getOutputFile(Deployment deployment) {
         String targetId = deployment.getTarget().getId();
-        String outputFilename = targetId + "-deployments";
-        File outputFile = new File(outputFolder, outputFilename + ".csv");
+        String outputFilename = targetId + "-deployments.csv";
 
-        return outputFile;
+        return new File(outputFolder, outputFilename);
     }
 
 }

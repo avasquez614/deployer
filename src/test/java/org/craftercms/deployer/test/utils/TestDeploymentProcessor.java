@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2017 Crafter Software Corporation.
+ * Copyright (C) 2007-2019 Crafter Software Corporation. All Rights Reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,14 +17,16 @@
 package org.craftercms.deployer.test.utils;
 
 import org.apache.commons.configuration2.Configuration;
+import org.craftercms.commons.config.ConfigurationException;
 import org.craftercms.deployer.api.ChangeSet;
 import org.craftercms.deployer.api.Deployment;
 import org.craftercms.deployer.api.ProcessorExecution;
 import org.craftercms.deployer.api.exceptions.DeployerException;
 import org.craftercms.deployer.impl.processors.AbstractMainDeploymentProcessor;
-import org.craftercms.deployer.utils.ConfigUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import static org.craftercms.deployer.utils.ConfigUtils.getStringProperty;
 
 /**
  * Utility processor that just logs that it's running.
@@ -42,18 +44,18 @@ public class TestDeploymentProcessor extends AbstractMainDeploymentProcessor {
     }
 
     @Override
-    public void destroy() throws DeployerException {
+    protected void doInit(Configuration config) throws ConfigurationException {
+        text = getStringProperty(config, "text");
+    }
+
+    @Override
+    protected void doDestroy() throws DeployerException {
         // Do nothing
     }
 
     @Override
-    protected void doInit(Configuration config) throws DeployerException {
-        text = ConfigUtils.getStringProperty(config, "text");
-    }
-
-    @Override
-    protected ChangeSet doExecute(Deployment deployment, ProcessorExecution execution,
-                                  ChangeSet filteredChangeSet) throws DeployerException {
+    protected ChangeSet doMainProcess(Deployment deployment, ProcessorExecution execution,
+                                      ChangeSet filteredChangeSet, ChangeSet originalChangeSet) {
         logger.info("Test deployment processor running");
 
         return filteredChangeSet;

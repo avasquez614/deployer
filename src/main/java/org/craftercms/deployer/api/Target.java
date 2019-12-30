@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2017 Crafter Software Corporation.
+ * Copyright (C) 2007-2019 Crafter Software Corporation. All Rights Reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,14 +18,15 @@ package org.craftercms.deployer.api;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import org.apache.commons.configuration2.HierarchicalConfiguration;
+import org.apache.commons.configuration2.tree.ImmutableNode;
+import org.craftercms.deployer.api.exceptions.TargetNotReadyException;
+import org.springframework.context.ConfigurableApplicationContext;
 
 import java.io.File;
 import java.time.ZonedDateTime;
 import java.util.Collection;
 import java.util.Map;
-
-import org.apache.commons.configuration2.Configuration;
-import org.springframework.scheduling.TaskScheduler;
 
 /**
  * Represents a deployment target.
@@ -33,6 +34,17 @@ import org.springframework.scheduling.TaskScheduler;
  * @author avasquez
  */
 public interface Target {
+
+    String AUTHORING_ENV = "authoring";
+
+    enum Status {
+        CREATED,
+        INIT_IN_PROGRESS,
+        INIT_FAILED,
+        INIT_COMPLETED,
+        DELETE_IN_PROGRESS,
+        DELETED
+    }
 
     /**
      * Returns the ID of the target.
@@ -59,6 +71,18 @@ public interface Target {
     ZonedDateTime getLoadDate();
 
     /**
+     * Returns the status of the target
+     */
+    @JsonProperty("status")
+    Status getStatus();
+
+    /**
+     * Indicates if Crafter Search should be used instead of Elasticsearch.
+     */
+    @JsonProperty("crafter_search_enabled")
+    boolean isCrafterSearchEnabled();
+
+    /**
      * Returns the YAML configuration file of the target.
      */
     @JsonIgnore
@@ -68,25 +92,30 @@ public interface Target {
      * Returns the configuration of the target.
      */
     @JsonIgnore
-    Configuration getConfiguration();
+    HierarchicalConfiguration<ImmutableNode> getConfiguration();
 
     /**
-     * Deploys the target.
+     * Returns this target's Spring application context
+     */
+    @JsonIgnore
+    ConfigurableApplicationContext getApplicationContext();
+
+    /**
+     * Starts the initialization of the target (asynchronous operation). Called when the create target API is called
+     * or the target config is loaded.
+     */
+    void init();
+
+    /**
+     * Starts a new deployment for the target (asynchronous operation if {@code waitTillDone} is false).
      *
      * @param waitTillDone  if the method should wait till the deployment is done or return immediately
      * @param params        miscellaneous parameters that can be used by the processors.
      *
      * @return the deployment info
+     * @throws TargetNotReadyException if the target is not in {@link Status#INIT_COMPLETED}
      */
-    Deployment deploy(boolean waitTillDone, Map<String, Object> params);
-
-    /**
-     * Schedules deployment of the target.
-     *
-     * @param scheduler         the scheduler to use
-     * @param cronExpression    the cron expression
-     */
-    void scheduleDeployment(TaskScheduler scheduler, String cronExpression);
+    Deployment deploy(boolean waitTillDone, Map<String, Object> params) throws TargetNotReadyException;
 
     /**
      * Returns the pending deployments.
@@ -107,8 +136,24 @@ public interface Target {
     Collection<Deployment> getAllDeployments();
 
     /**
-     * Closes the target and releases any open resources.
+     * Indicates if the target is for authoring environment.
+     */
+    @JsonIgnore
+    boolean isEnvAuthoring();
+
+    /**
+     * Performs a cleanup of the local repository.
+     */
+    void cleanRepo();
+
+    /**
+     * Closes the target, releases any open resources and stops any running threads associated to the target.
      */
     void close();
+
+    /**
+     * Deletes the target, executing any delete hooks. Calls {@link #close()} too.
+     */
+    void delete();
 
 }

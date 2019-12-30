@@ -1,47 +1,54 @@
+/*
+ * Copyright (C) 2007-2019 Crafter Software Corporation. All Rights Reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 package org.craftercms.deployer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.dataformat.csv.CsvMapper;
 import com.github.jknack.handlebars.Handlebars;
 import com.github.jknack.handlebars.io.CompositeTemplateLoader;
 import com.github.jknack.handlebars.springmvc.SpringTemplateLoader;
-
-import java.io.File;
-import java.io.IOException;
-
 import freemarker.template.TemplateException;
-import org.apache.commons.lang3.StringUtils;
-import org.craftercms.core.cache.impl.CacheStoreAdapter;
-import org.craftercms.core.cache.impl.store.NoopCacheStoreAdapter;
-import org.craftercms.core.processors.ItemProcessor;
-import org.craftercms.core.processors.impl.PageAwareIncludeDescriptorsProcessor;
-import org.craftercms.core.service.ContentStoreService;
 import org.craftercms.deployer.api.TargetService;
-import org.craftercms.deployer.api.exceptions.DeployerException;
 import org.craftercms.deployer.impl.ProcessedCommitsStore;
 import org.craftercms.deployer.impl.ProcessedCommitsStoreImpl;
 import org.craftercms.deployer.utils.handlebars.ListHelper;
 import org.craftercms.deployer.utils.handlebars.MissingValueHelper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ImportResource;
 import org.springframework.context.annotation.Primary;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.http.MediaType;
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
-import org.springframework.scheduling.TaskScheduler;
 import org.springframework.scheduling.annotation.EnableScheduling;
-import org.springframework.scheduling.annotation.SchedulingConfigurer;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
-import org.springframework.scheduling.config.ScheduledTaskRegistrar;
+import org.springframework.web.client.RestTemplate;
 import org.springframework.web.servlet.config.annotation.ContentNegotiationConfigurer;
-import org.springframework.web.servlet.config.annotation.WebMvcConfigurerAdapter;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.concurrent.ExecutorService;
 
 import static org.craftercms.deployer.DeployerApplication.CORE_APP_CONTEXT_LOCATION;
 
@@ -53,20 +60,10 @@ import static org.craftercms.deployer.DeployerApplication.CORE_APP_CONTEXT_LOCAT
 @SpringBootApplication
 @EnableScheduling
 @ImportResource(CORE_APP_CONTEXT_LOCATION)
-public class DeployerApplication extends WebMvcConfigurerAdapter implements SchedulingConfigurer  {
-
-	private static final Logger logger = LoggerFactory.getLogger(DeployerApplication.class);
+public class DeployerApplication implements WebMvcConfigurer  {
 
 	public static final String CORE_APP_CONTEXT_LOCATION = "classpath:crafter/core/core-context.xml";
 
-	public static final String DEFAULT_INCLUDE_ELEMENT_XPATH_QUERY = "//include";
-	public static final String DEFAULT_DISABLED_INCLUDE_NODE_XPATH_QUERY = "../disableFlattening";
-	public static final String DEFAULT_PAGES_PATH_PATTERN = "^/?site/website/.*$";
-
-	@Value("${deployer.main.targets.scan.scheduling.enabled}")
-	private boolean scheduledTargetScanEnabled;
-	@Value("${deployer.main.targets.scan.scheduling.cron}")
-	private String scheduledTargetScanCron;
 	@Value("${deployer.main.taskScheduler.poolSize}")
 	private int taskSchedulerPoolSize;
 	@Value("${deployer.main.targets.config.templates.location}")
@@ -79,30 +76,23 @@ public class DeployerApplication extends WebMvcConfigurerAdapter implements Sche
 	private String targetConfigTemplatesEncoding;
 	@Value("${deployer.main.deployments.processedCommits.folderPath}")
 	private File processedCommitsFolder;
+
+	@Value("${deployer.main.deployments.pool.size}")
+	private int deploymentPoolSize;
+	@Value("${deployer.main.deployments.pool.max}")
+	private int deploymentPoolMaxSize;
+	@Value("${deployer.main.deployments.pool.queue}")
+	private int deploymentPoolQueue;
+	@Value("${deployer.main.deployments.pool.name}")
+	private String deploymentPoolName;
+	@Value("${deployer.main.deployments.pool.prefix}")
+	private String deploymentPoolPrefix;
+
 	@Autowired
 	private TargetService targetService;
-	@Autowired
-	private ContentStoreService contentStoreService;
 
 	public static void main(String[] args) {
 		SpringApplication.run(DeployerApplication.class, args);
-	}
-
-	@Bean("crafter.cacheStoreAdapter")
-	public CacheStoreAdapter cacheStoreAdapter() {
-		return new NoopCacheStoreAdapter();
-	}
-
-	@Bean
-	public ItemProcessor includeDescriptorsProcessor() {
-		PageAwareIncludeDescriptorsProcessor processor = new PageAwareIncludeDescriptorsProcessor();
-		processor.setIncludeElementXPathQuery(DEFAULT_INCLUDE_ELEMENT_XPATH_QUERY);
-		processor.setDisabledIncludeNodeXPathQuery(DEFAULT_DISABLED_INCLUDE_NODE_XPATH_QUERY);
-		processor.setPagesPathPattern(DEFAULT_PAGES_PATH_PATTERN);
-		processor.setIncludedItemsProcessor(processor);
-		processor.setContentStoreService(contentStoreService);
-
-		return processor;
 	}
 
 	@Bean
@@ -122,19 +112,29 @@ public class DeployerApplication extends WebMvcConfigurerAdapter implements Sche
 	}
 
 	@Bean
-	public ObjectMapper csvObjectMapper(Jackson2ObjectMapperBuilder builder) {
-		CsvMapper csvMapper = new CsvMapper();
-		builder.configure(csvMapper);
-		csvMapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
-		return csvMapper;
+	public RestTemplate restTemplate(RestTemplateBuilder builder) {
+		return builder.build();
 	}
 
 	@Bean(destroyMethod="shutdown")
-	public TaskScheduler taskScheduler() {
+	public ThreadPoolTaskScheduler taskScheduler() {
 		ThreadPoolTaskScheduler taskScheduler = new ThreadPoolTaskScheduler();
 		taskScheduler.setPoolSize(taskSchedulerPoolSize);
 
 		return taskScheduler;
+	}
+
+	@Bean(destroyMethod = "shutdownNow")
+	public ExecutorService deploymentTaskExecutor() {
+		ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+		executor.setCorePoolSize(deploymentPoolSize);
+		executor.setMaxPoolSize(deploymentPoolMaxSize);
+		executor.setQueueCapacity(deploymentPoolQueue);
+		executor.setThreadGroupName(deploymentPoolName);
+		executor.setThreadNamePrefix(deploymentPoolPrefix);
+		executor.initialize();
+
+		return executor.getThreadPoolExecutor();
 	}
 
 	@Bean
@@ -161,30 +161,6 @@ public class DeployerApplication extends WebMvcConfigurerAdapter implements Sche
 	@Override
 	public void configureContentNegotiation(ContentNegotiationConfigurer configurer) {
 		configurer.defaultContentType(MediaType.APPLICATION_JSON_UTF8);
-	}
-
-	@Override
-	public void configureTasks(ScheduledTaskRegistrar taskRegistrar) {
-		taskRegistrar.setScheduler(taskScheduler());
-		configureTargetScanTask(taskRegistrar);
-	}
-
-	private void configureTargetScanTask(ScheduledTaskRegistrar taskRegistrar) {
-		if (scheduledTargetScanEnabled && StringUtils.isNotEmpty(scheduledTargetScanCron)) {
-			logger.info("Target scan scheduled with cron {}", scheduledTargetScanCron);
-
-			Runnable task = () -> {
-
-				try {
-					targetService.resolveTargets();
-				} catch (DeployerException e) {
-					logger.error("Scheduled target scan failed", e);
-				}
-
-			};
-
-			taskRegistrar.addCronTask(task, scheduledTargetScanCron);
-		}
 	}
 
 }

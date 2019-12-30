@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2017 Crafter Software Corporation.
+ * Copyright (C) 2007-2019 Crafter Software Corporation. All Rights Reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,43 +16,38 @@
  */
 package org.craftercms.deployer.impl.processors;
 
-import java.util.Map;
-
+import org.craftercms.deployer.api.ChangeSet;
 import org.craftercms.deployer.api.Deployment;
 import org.craftercms.deployer.api.exceptions.DeployerException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
- * Base class for {@link org.craftercms.deployer.api.DeploymentProcessor}s that are executed during the post deployment phase, which is
- * the phase that happens after all the files from the change set have been processed.
+ * Base class for {@link org.craftercms.deployer.api.DeploymentProcessor}s that are executed during the post
+ * deployment phase, which is the phase that happens after all the files from the change set have been processed.
  *
  * @author avasquez
  */
 public abstract class AbstractPostDeploymentProcessor extends AbstractDeploymentProcessor {
 
-    private static final Logger logger = LoggerFactory.getLogger(AbstractPostDeploymentProcessor.class);
-
     @Override
-    public void execute(Deployment deployment) {
-        deployment.end(Deployment.Status.SUCCESS);
-
-        if (shouldExecute(deployment)) {
-            try {
-                logger.info("----- {} @ {} -----", name, targetId);
-
-                doExecute(deployment);
-            } catch (Exception e) {
-                logger.error("Processor '" + name + "' for target '" + targetId + "' failed", e);
-            }
-        }
+    public boolean isPostDeployment() {
+        return true;
     }
 
-    protected boolean shouldExecute(Deployment deployment) {
-        // Run if there was a failure or the change set is not empty
+    @Override
+    protected ChangeSet doExecute(Deployment deployment, ChangeSet filteredChangeSet,
+                                  ChangeSet originalChangeSet) throws Exception {
+        deployment.end(Deployment.Status.SUCCESS);
+
+        return doPostProcess(deployment, filteredChangeSet, originalChangeSet);
+    }
+
+    @Override
+    protected boolean shouldExecute(Deployment deployment, ChangeSet filteredChangeSet) {
+        // Run if there's a current jump to and it matches the label if there was a failure or the change set is not empty
         return deployment.getStatus() == Deployment.Status.FAILURE || !deployment.isChangeSetEmpty();
     }
 
-    protected abstract void doExecute(Deployment deployment) throws DeployerException;
+    protected abstract ChangeSet doPostProcess(Deployment deployment, ChangeSet filteredChangeSet,
+                                               ChangeSet originalChangeSet) throws DeployerException;
 
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2017 Crafter Software Corporation.
+ * Copyright (C) 2007-2019 Crafter Software Corporation. All Rights Reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,27 +18,22 @@ package org.craftercms.deployer.utils;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URISyntaxException;
+import java.util.Collections;
 
 import org.apache.commons.lang3.StringUtils;
-import org.craftercms.deployer.utils.git.GitAuthenticationConfigurator;
-import org.eclipse.jgit.api.CloneCommand;
-import org.eclipse.jgit.api.FetchCommand;
-import org.eclipse.jgit.api.Git;
-import org.eclipse.jgit.api.MergeCommand;
-import org.eclipse.jgit.api.MergeResult;
-import org.eclipse.jgit.api.PullCommand;
-import org.eclipse.jgit.api.PullResult;
-import org.eclipse.jgit.api.RebaseCommand;
-import org.eclipse.jgit.api.RebaseResult;
-import org.eclipse.jgit.api.ResetCommand;
+import org.craftercms.commons.git.auth.GitAuthenticationConfigurator;
+import org.eclipse.jgit.api.*;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.lib.Constants;
-import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.StoredConfig;
-import org.eclipse.jgit.transport.CredentialsProvider;
-import org.eclipse.jgit.transport.FetchResult;
-import org.eclipse.jgit.transport.SshSessionFactory;
-import org.eclipse.jgit.transport.SshTransport;
+import org.eclipse.jgit.merge.MergeStrategy;
+import org.eclipse.jgit.transport.PushResult;
+import org.eclipse.jgit.transport.RefSpec;
+import org.eclipse.jgit.transport.URIish;
+
+import static org.eclipse.jgit.api.ResetCommand.ResetType.HARD;
+import static org.eclipse.jgit.lib.Constants.HEAD;
 
 /**
  * Utility methods for Git operations.
@@ -46,6 +41,8 @@ import org.eclipse.jgit.transport.SshTransport;
  * @author avasquez
  */
 public abstract class GitUtils {
+
+    public static final String GIT_FOLDER_NAME = ".git";
 
     public static final String CORE_CONFIG_SECTION = "core";
     public static final String BIG_FILE_THRESHOLD_CONFIG_PARAM = "bigFileThreshold";
@@ -63,9 +60,7 @@ public abstract class GitUtils {
      * Opens the Git repository at the specified location.
      *
      * @param localRepositoryFolder the folder where the Git repository is
-     *
      * @return the Git instance used to handle the repository
-     *
      * @throws IOException if an error occurs
      */
     public static Git openRepository(File localRepositoryFolder) throws IOException {
@@ -75,28 +70,31 @@ public abstract class GitUtils {
     /**
      * Clones a remote repository into a specific local folder.
      *
-     * @param remoteRepoUrl     the URL of the remote repository. This should be a legal Git URL.
-     * @param branch            the branch which should be cloned
-     * @param authConfigurator  the {@link GitAuthenticationConfigurator} class used to configure the authentication with the remote
-     *                          repository
-     * @param localFolder       the local folder into which the remote repository should be cloned
-     * @param bigFileThreshold  the value of the Git {@code core.bigFileThreshold} config property
-     * @param compression       the value of the Git {@code core.compression} config property
-     * @param fileMode          the value of the Git {@code core.fileMode} config property
-     *
+     * @param remoteName       the name of the remote
+     * @param remoteUrl        the URL of the remote. This should be a legal Git URL.
+     * @param branch           the branch which should be cloned
+     * @param authConfigurator the {@link GitAuthenticationConfigurator} class used to configure the authentication
+     *                         with the remote repository
+     * @param localFolder      the local folder into which the remote repository should be cloned
+     * @param bigFileThreshold the value of the Git {@code core.bigFileThreshold} config property
+     * @param compression      the value of the Git {@code core.compression} config property
+     * @param fileMode         the value of the Git {@code core.fileMode} config property
      * @return the Git instance used to handle the cloned repository
-     *
-     * @throws GitAPIException  if a Git related error occurs
-     * @throws IOException      if an IO error occurs
+     * @throws GitAPIException if a Git related error occurs
+     * @throws IOException     if an IO error occurs
      */
-    public static Git cloneRemoteRepository(String remoteRepoUrl, String branch, GitAuthenticationConfigurator authConfigurator,
-                                            File localFolder, String bigFileThreshold, Integer compression, Boolean fileMode)
-        throws GitAPIException, IOException{
+    public static Git cloneRemoteRepository(String remoteName, String remoteUrl, String branch,
+                                            GitAuthenticationConfigurator authConfigurator, File localFolder,
+                                            String bigFileThreshold, Integer compression,
+                                            Boolean fileMode) throws GitAPIException, IOException {
         CloneCommand command = Git.cloneRepository();
-        command.setURI(remoteRepoUrl);
+        command.setRemote(remoteName);
+        command.setURI(remoteUrl);
         command.setDirectory(localFolder);
 
         if (StringUtils.isNotEmpty(branch)) {
+            command.setCloneAllBranches(false);
+            command.setBranchesToClone(Collections.singletonList(Constants.R_HEADS + branch));
             command.setBranch(branch);
         }
 
@@ -128,80 +126,116 @@ public abstract class GitUtils {
     /**
      * Execute a Git pull.
      *
-     * @param git               the Git instance used to handle the repository
-     * @param authConfigurator  the {@link GitAuthenticationConfigurator} class used to configure the authentication with the remote
-     *                          repository
-     * @param useRebase         if rebase should be used instead of merge after fetching
-     *
+     * @param git              the Git instance used to handle the repository
+     * @param remoteName       the name of the remote where to pull from
+     * @param remoteUrl        the URL of the remote (remote will be set to the URL)
+     * @param branch           the branch to pull
+     * @param mergeStrategy    the merge strategy to use
+     * @param authConfigurator the {@link GitAuthenticationConfigurator} class used to configure the authentication
+     *                         with the remote repository
      * @return the result of the pull
-     *
      * @throws GitAPIException if a Git related error occurs
+     * @throws URISyntaxException if the remote URL is invalid
      */
-    public static PullResult pull(Git git, GitAuthenticationConfigurator authConfigurator, boolean useRebase) throws GitAPIException {
+    public static PullResult pull(Git git, String remoteName, String remoteUrl, String branch,
+                                  MergeStrategy mergeStrategy, GitAuthenticationConfigurator authConfigurator)
+            throws GitAPIException, URISyntaxException {
+        addRemote(git, remoteName, remoteUrl);
+
         PullCommand command = git.pull();
+        command.setRemote(remoteName);
+        command.setRemoteBranchName(branch);
+
+        if (mergeStrategy != null) {
+            command.setStrategy(mergeStrategy);
+        }
 
         if (authConfigurator != null) {
             authConfigurator.configureAuthentication(command);
         }
 
-        command.setRebase(useRebase);
-
         return command.call();
     }
 
     /**
-     * Executes a git fetch.
-     * @param git               the Git instance used to handle the repository
-     * @param authConfigurator  the {@link GitAuthenticationConfigurator} class used to configure the authentication with the remote
-     *                          repository
-     * @return                  the result of the fetch
-     * @throws GitAPIException  if a Git related error occurs
+     * Executes a git push.
+     *
+     * @param git              the Git instance used to handle the repository
+     * @param remote           remote name or URL
+     * @param pushAll          if the push should push all local branches
+     * @param remoteBranch     the remote remoteBranch being pushed to
+     * @param authConfigurator the {@link GitAuthenticationConfigurator} class used to configure the authentication
+     *                         with the remote
+     *                         repository
+     * @param force            sets the force preference for the push
+     * @return the result of the push
+     * @throws GitAPIException if a Git related error occurs
      */
-    public static FetchResult fetch(Git git, GitAuthenticationConfigurator authConfigurator) throws GitAPIException {
-        FetchCommand fetch = git.fetch();
-        if(authConfigurator != null) {
-            authConfigurator.configureAuthentication(fetch);
+    public static Iterable<PushResult> push(Git git, String remote, boolean pushAll, String localBranch,
+                                            String remoteBranch, GitAuthenticationConfigurator authConfigurator,
+                                            boolean force) throws GitAPIException {
+        PushCommand push = git.push();
+        push.setRemote(remote);
+        push.setForce(force);
+
+        if (pushAll) {
+            push.setPushAll();
+        } else if (StringUtils.isNotEmpty(remoteBranch)) {
+            push.setRefSpecs(new RefSpec(localBranch + ":" + Constants.R_HEADS + remoteBranch));
         }
-        return fetch.call();
+
+        if (authConfigurator != null) {
+            authConfigurator.configureAuthentication(push);
+        }
+
+        return push.call();
     }
 
     /**
-     * Executes a git reset.
-     * @param git               the Git instance used to handle the repository
-     * @param commitId          the ID of the commit to which the repository will be reverted
-     * @throws GitAPIException  if a Git related error occurs
+     * Executes a git gc.
+     * @param repoPath full path of the repository
+     * @throws GitAPIException if there is an error running the command
+     * @throws IOException if there is an error opening the repository
      */
-    public static void reset(Git git, ObjectId commitId) throws GitAPIException {
-        ResetCommand reset = git.reset();
-        reset.setRef(commitId.name());
-        reset.setMode(ResetCommand.ResetType.HARD);
-        reset.call();
+    public static void cleanup(String repoPath) throws GitAPIException, IOException {
+        openRepository(new File(repoPath)).gc().call();
     }
 
     /**
-     * Executes a git merge.
-     * @param git               the Git instance used to handle the repository
-     * @param branch            the name of the branch in the remote repository
-     * @return                  the result of the merge
-     * @throws GitAPIException  if a Git related error occurs
+     * Executes a git reset to discard all uncommitted changes
+     * @param git the git repository
+     * @throws GitAPIException if there is an error performing the reset
      */
-    public static MergeResult merge(Git git, String branch) throws GitAPIException, IOException {
-        MergeCommand merge = git.merge();
-        merge.include(git.getRepository().resolve(Constants.DEFAULT_REMOTE_NAME + "/" + branch));
-        return merge.call();
+    public static void discardAllChanges(Git git) throws GitAPIException {
+        git.reset().setMode(HARD).setRef(HEAD).call();
     }
 
     /**
-     * Executes a git rebase.
-     * @param git               the Git instance used to handle the repository
-     * @param branch            the name of the branch in the remote repository
-     * @return                  the result of the rebase
-     * @throws GitAPIException  if a Git related error occurs
+     * Adds a remote if it doesn't exist. If the remote exists but the URL is different, updates the URL
+     *
+     * @param git the Git repo
+     * @param remoteName the name oif the remote
+     * @param remoteUrl the URL of the remote
+     *
+     * @throws GitAPIException if a Git error occurs
+     * @throws URISyntaxException if the remote URL is an invalid Git URL
      */
-    public static RebaseResult rebase(Git git, String branch) throws GitAPIException {
-        RebaseCommand rebase = git.rebase();
-        rebase.setUpstream(Constants.DEFAULT_REMOTE_NAME + "/" + branch);
-        return rebase.call();
+    private static void addRemote(Git git, String remoteName, String remoteUrl) throws GitAPIException,
+                                                                                       URISyntaxException {
+        String currentUrl = git.getRepository().getConfig().getString("remote", remoteName, "url");
+        if (StringUtils.isNotEmpty(currentUrl)) {
+            if (!currentUrl.equals(remoteUrl)) {
+                RemoteSetUrlCommand remoteSetUrl = git.remoteSetUrl();
+                remoteSetUrl.setName(remoteName);
+                remoteSetUrl.setUri(new URIish(remoteUrl));
+                remoteSetUrl.call();
+            }
+        } else {
+            RemoteAddCommand remoteAdd = git.remoteAdd();
+            remoteAdd.setName(remoteName);
+            remoteAdd.setUri(new URIish(remoteUrl));
+            remoteAdd.call();
+        }
     }
 
 }

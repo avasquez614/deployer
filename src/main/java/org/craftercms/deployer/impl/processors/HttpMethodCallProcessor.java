@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2017 Crafter Software Corporation.
+ * Copyright (C) 2007-2019 Crafter Software Corporation. All Rights Reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,34 +16,25 @@
  */
 package org.craftercms.deployer.impl.processors;
 
-import java.io.IOException;
-import java.util.Map;
-
-import javax.annotation.PreDestroy;
-
 import org.apache.commons.configuration2.Configuration;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.http.HttpEntity;
-import org.apache.http.client.methods.CloseableHttpResponse;
-import org.apache.http.client.methods.HttpDelete;
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.client.methods.HttpHead;
-import org.apache.http.client.methods.HttpOptions;
-import org.apache.http.client.methods.HttpPost;
-import org.apache.http.client.methods.HttpPut;
-import org.apache.http.client.methods.HttpTrace;
-import org.apache.http.client.methods.HttpUriRequest;
+import org.apache.http.client.methods.*;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 import org.apache.http.util.EntityUtils;
+import org.craftercms.commons.config.ConfigurationException;
 import org.craftercms.deployer.api.ChangeSet;
 import org.craftercms.deployer.api.Deployment;
 import org.craftercms.deployer.api.ProcessorExecution;
 import org.craftercms.deployer.api.exceptions.DeployerException;
-import org.craftercms.deployer.utils.ConfigUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+
+import static org.craftercms.deployer.utils.ConfigUtils.getRequiredStringProperty;
 
 /**
  * Processor that does an HTTP method call. A processor instance can be configured with the following YAML properties:
@@ -59,28 +50,30 @@ public class HttpMethodCallProcessor extends AbstractMainDeploymentProcessor {
 
     private static final Logger logger = LoggerFactory.getLogger(HttpMethodCallProcessor.class);
 
-    public static final String URL_CONFIG_KEY = "url";
-    public static final String METHOD_CONFIG_KEY = "method";
+    protected static final String URL_CONFIG_KEY = "url";
+    protected static final String METHOD_CONFIG_KEY = "method";
+
+    // Config properties (populated on init)
 
     protected String url;
     protected String method;
     protected CloseableHttpClient httpClient;
 
     @Override
-    protected void doInit(Configuration config) throws DeployerException {
-        url = ConfigUtils.getRequiredStringProperty(config, URL_CONFIG_KEY);
-        method = ConfigUtils.getRequiredStringProperty(config, METHOD_CONFIG_KEY);
+    protected void doInit(Configuration config) throws ConfigurationException {
+        url = getRequiredStringProperty(config, URL_CONFIG_KEY);
+        method = getRequiredStringProperty(config, METHOD_CONFIG_KEY);
         httpClient = HttpClients.createDefault();
     }
 
     @Override
-    public void destroy() throws DeployerException {
-        IOUtils.closeQuietly(httpClient);
+    protected void doDestroy() throws DeployerException {
+        // Do nothing
     }
 
     @Override
-    protected ChangeSet doExecute(Deployment deployment, ProcessorExecution execution,
-                                  ChangeSet filteredChangeSet) throws DeployerException {
+    protected ChangeSet doMainProcess(Deployment deployment, ProcessorExecution execution,
+                                      ChangeSet filteredChangeSet, ChangeSet originalChangeSet) throws DeployerException {
         HttpUriRequest request = createRequest();
 
         logger.info("Executing request {}...", request);

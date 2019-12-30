@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2017 Crafter Software Corporation.
+ * Copyright (C) 2007-2019 Crafter Software Corporation. All Rights Reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,18 +17,14 @@
 package org.craftercms.deployer.api.exceptions;
 
 /**
- * Exception thrown when an error related to configuration happens.
+ * Exception thrown when a target is not ready yet to accept deployments.
  *
  * @author avasquez
  */
-public class DeployerConfigurationException extends DeployerException {
+public class TargetNotReadyException extends DeployerException {
 
-    public DeployerConfigurationException(String message) {
+    public TargetNotReadyException(String message) {
         super(message);
-    }
-
-    public DeployerConfigurationException(String message, Throwable cause) {
-        super(message, cause);
     }
 
 }

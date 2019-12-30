@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2017 Crafter Software Corporation.
+ * Copyright (C) 2007-2019 Crafter Software Corporation. All Rights Reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,15 +24,27 @@ package org.craftercms.deployer.api.exceptions;
 public class TargetNotFoundException extends DeployerException {
 
     protected String id;
+    protected String env;
+    protected String siteName;
 
-    public TargetNotFoundException(String id) {
+    public TargetNotFoundException(String id, String env, String siteName) {
         super("Target '" + id + "' not found");
 
         this.id = id;
+        this.env = env;
+        this.siteName = siteName;
     }
 
     public String getId() {
         return id;
+    }
+
+    public String getEnv() {
+        return env;
+    }
+
+    public String getSiteName() {
+        return siteName;
     }
 
 }

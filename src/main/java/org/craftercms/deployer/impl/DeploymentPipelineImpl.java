@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2017 Crafter Software Corporation.
+ * Copyright (C) 2007-2019 Crafter Software Corporation. All Rights Reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -64,10 +64,16 @@ public class DeploymentPipelineImpl implements DeploymentPipeline {
     @Override
     public void execute(Deployment deployment) {
         deployment.start();
+        try {
+            executeProcessors(deployment);
 
-        executeProcessors(deployment);
+            deployment.end(Deployment.Status.SUCCESS);
+        } catch (Exception e) {
+            logger.error("Unexpected error occurred while executing deployment pipeline for target '{}'",
+                         deployment.getTarget().getId(), e);
 
-        deployment.end(Deployment.Status.SUCCESS);
+            deployment.end(Deployment.Status.FAILURE);
+        }
     }
 
     protected void executeProcessors(Deployment deployment) {

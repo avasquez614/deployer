@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2017 Crafter Software Corporation.
+ * Copyright (C) 2007-2019 Crafter Software Corporation. All Rights Reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,13 +24,14 @@ import java.util.Collections;
 import java.util.List;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.craftercms.search.batch.AbstractUpdateDetailProvider;
 
 /**
  * The collection of created, updated and deleted files that have been changed in a deployment.
  *
  * @author avasquez
  */
-public class ChangeSet {
+public class ChangeSet extends AbstractUpdateDetailProvider {
 
     protected List<String> createdFiles;
     protected List<String> updatedFiles;
@@ -53,7 +54,27 @@ public class ChangeSet {
      */
     @JsonProperty("created_files")
     public List<String> getCreatedFiles() {
-        return Collections.unmodifiableList(createdFiles);
+        return createdFiles;
+    }
+
+    /**
+     * Adds a file to the list of created files if it's not in the list
+     * 
+     * @param file the file to add
+     */
+    public void addCreatedFile(String file) {
+        if (!createdFiles.contains(file)) {
+            createdFiles.add(file);
+        }
+    }
+
+    /**
+     * Removes a file from the list of created files.
+     * 
+     * @param file the file to remove
+     */
+    public void removeCreatedFile(String file) {
+        createdFiles.remove(file);
     }
 
     /**
@@ -61,16 +82,56 @@ public class ChangeSet {
      */
     @JsonProperty("updated_files")
     public List<String> getUpdatedFiles() {
-        return Collections.unmodifiableList(updatedFiles);
+        return updatedFiles;
     }
+
+    /**
+     * Adds a file to the list of updated files if it's not in the list
+     *
+     * @param file the file to add
+     */
+    public void addUpdatedFile(String file) {
+        if (!updatedFiles.contains(file)) {
+            updatedFiles.add(file);
+        }
+    }
+
+    /**
+     * Removes a file from the list of updated files.
+     *
+     * @param file the file to remove
+     */
+    public void removeUpdatedFile(String file) {
+        updatedFiles.remove(file);
+    }    
 
     /**
      * Returns the list of deleted files.
      */
     @JsonProperty("deleted_files")
     public List<String> getDeletedFiles() {
-        return Collections.unmodifiableList(deletedFiles);
+        return deletedFiles;
     }
+
+    /**
+     * Adds a file to the list of deleted files if it's not in the list
+     *
+     * @param file the file to add
+     */
+    public void addDeletedFile(String file) {
+        if (!deletedFiles.contains(file)) {
+            deletedFiles.add(file);
+        }
+    }
+
+    /**
+     * Removes a file from the list of deleted files.
+     *
+     * @param file the file to remove
+     */
+    public void removeDeletedFile(String file) {
+        deletedFiles.remove(file);
+    }    
 
     /**
      * Returns true if there are not created, updated or deleted files.

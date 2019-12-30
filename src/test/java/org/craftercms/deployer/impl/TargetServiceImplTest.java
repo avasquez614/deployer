@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2017 Crafter Software Corporation.
+ * Copyright (C) 2007-2019 Crafter Software Corporation. All Rights Reserved.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,27 +25,32 @@ import java.nio.file.Files;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.RandomStringUtils;
+import org.craftercms.commons.config.ConfigurationException;
+import org.craftercms.deployer.api.lifecycle.TargetLifecycleHook;
+import org.craftercms.search.elasticsearch.ElasticsearchAdminService;
 import org.craftercms.deployer.api.DeploymentPipeline;
 import org.craftercms.deployer.api.Target;
 import org.craftercms.deployer.api.exceptions.DeployerException;
+import org.craftercms.search.service.AdminService;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-import org.springframework.context.support.ClassPathXmlApplicationContext;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.xml.XmlBeanDefinitionReader;
+import org.springframework.context.support.GenericApplicationContext;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.DefaultResourceLoader;
 import org.springframework.scheduling.TaskScheduler;
 
+import static org.craftercms.deployer.impl.DeploymentConstants.CREATE_TARGET_LIFECYCLE_HOOKS_CONFIG_KEY;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
-import static org.mockito.Mockito.any;
-import static org.mockito.Mockito.anyString;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 /**
  * Unit tests for {@link TargetServiceImplTest}.
@@ -56,10 +61,20 @@ public class TargetServiceImplTest {
 
     private TargetServiceImpl targetService;
     private File targetsFolder;
+    private List<TargetLifecycleHook> createHooks;
 
     @Before
     public void setUp() throws Exception {
         targetsFolder = createTargetsFolder();
+
+        DefaultListableBeanFactory factory = new DefaultListableBeanFactory();
+        factory.registerSingleton("elasticsearchAdminService", mock(ElasticsearchAdminService.class));
+        factory.registerSingleton("adminService", mock(AdminService.class));
+
+        GenericApplicationContext context = new GenericApplicationContext(factory);
+        XmlBeanDefinitionReader reader = new XmlBeanDefinitionReader(context);
+        reader.loadBeanDefinitions(new ClassPathResource("test-application-context.xml"));
+        context.refresh();
 
         targetService = new TargetServiceImpl(
             targetsFolder,
@@ -69,10 +84,12 @@ public class TargetServiceImplTest {
             new ClassPathResource("test-base-target-context-override.xml"),
             "test",
             createHandlebars(),
-            new ClassPathXmlApplicationContext("test-application-context.xml"),
+            context,
             createDeploymentPipelineFactory(),
             createTaskScheduler(),
-            createProcessedCommitsStore());
+            createTaskExecutor(),
+            createProcessedCommitsStore(),
+            createTargetLifecycleHooksResolver());
     }
 
     @After
@@ -186,12 +203,13 @@ public class TargetServiceImplTest {
         String randomParam = RandomStringUtils.randomAlphanumeric(8);
         Map<String, Object> params = Collections.singletonMap("random_param", randomParam);
 
-        Target target = targetService.createTarget(env, siteName, true, "test", params);
+        Target target = targetService.createTarget(env, siteName, true, "test", true, params);
 
         assertNotNull(target);
         assertEquals(env, target.getConfiguration().getString(DeploymentConstants.TARGET_ENV_CONFIG_KEY));
         assertEquals(siteName, target.getConfiguration().getString(DeploymentConstants.TARGET_SITE_NAME_CONFIG_KEY));
         assertEquals(randomParam, target.getConfiguration().getString("target.randomParam"));
+        verify(createHooks.get(0)).execute(target);
     }
 
     @Test
@@ -216,7 +234,8 @@ public class TargetServiceImplTest {
         return tempTargetsFolder;
     }
 
-    private DeploymentPipelineFactory createDeploymentPipelineFactory() throws DeployerException {
+    private DeploymentPipelineFactory createDeploymentPipelineFactory() throws ConfigurationException,
+                                                                               DeployerException {
         DeploymentPipelineFactory pipelineFactory = mock(DeploymentPipelineFactory.class);
         when(pipelineFactory.getPipeline(any(), any(), anyString())).thenReturn(mock(DeploymentPipeline.class));
 
@@ -227,8 +246,22 @@ public class TargetServiceImplTest {
         return mock(TaskScheduler.class);
     }
 
+    private ExecutorService createTaskExecutor() {
+        return mock(ExecutorService.class);
+    }
+
     private ProcessedCommitsStore createProcessedCommitsStore() {
         return mock(ProcessedCommitsStore.class);
+    }
+
+    private TargetLifecycleHooksResolver createTargetLifecycleHooksResolver() throws ConfigurationException,
+                                                                                     DeployerException {
+        createHooks = Collections.singletonList(mock(TargetLifecycleHook.class));
+
+        TargetLifecycleHooksResolver resolver = mock(TargetLifecycleHooksResolver.class);
+        when(resolver.getHooks(any(), any(), eq(CREATE_TARGET_LIFECYCLE_HOOKS_CONFIG_KEY))).thenReturn(createHooks);
+
+        return resolver;
     }
 
     private Handlebars createHandlebars() {
