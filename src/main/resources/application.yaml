@@ -97,11 +97,11 @@ deployer:
         folderPath: ${processedCommits.dir}
       pool:
         # Thread pool core size
-        size: 10
+        size: 25
         # Thread pool max size
-        max: 20
+        max: 100
         # Thread pool queue size
-        queue: 10
+        queue: 100
         # Thread pool group name
         name: deployments
         # Thread pool worker prefix
